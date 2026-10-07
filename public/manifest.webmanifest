@@ -1,0 +1,9 @@
+{
+  "name": "Arena Brasil – Agendamento",
+  "short_name": "Arena Brasil",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF6EF",
+  "theme_color": "#FAF6EF",
+  "icons": [{ "src": "/logo.jpeg", "sizes": "640x640", "type": "image/jpeg", "purpose": "any" }]
+}

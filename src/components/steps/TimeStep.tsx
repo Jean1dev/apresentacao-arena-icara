@@ -1,0 +1,187 @@
+import { isSameDay } from "date-fns";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowRight, ChevronDown, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { COURTS, minPrice, type Court } from "../../data/arena";
+import { freeCount, slotsFor, toKey, upcomingDays } from "../../lib/availability";
+import { haptic, longDate, money, rangesLabel } from "../../lib/format";
+import type { Booking } from "../../lib/storage";
+import { BottomSheet } from "../BottomSheet";
+import { CourtBadge } from "../CourtBadge";
+import { CourtIllustration } from "../CourtIllustration";
+import { DayStrip } from "../DayStrip";
+import { SlotGrid } from "../SlotGrid";
+import { TopBar } from "../TopBar";
+
+interface Props {
+  court: Court;
+  date: Date;
+  hours: number[];
+  bookings: Booking[];
+  onBack: () => void;
+  onDate: (d: Date) => void;
+  onHours: (h: number[]) => void;
+  onCourt: (c: Court) => void;
+  onContinue: () => void;
+}
+
+export function TimeStep({ court, date, hours, bookings, onBack, onDate, onHours, onCourt, onContinue }: Props) {
+  const [sheet, setSheet] = useState(false);
+  const days = useMemo(upcomingDays, []);
+  const slots = slotsFor(court, date, bookings);
+  const total = slots.filter((s) => hours.includes(s.hour)).reduce((sum, s) => sum + s.price, 0);
+  const visible = slots.filter((s) => s.status !== "passado");
+  const anyFree = visible.some((s) => s.status === "livre");
+
+  const toggle = (hour: number) => {
+    haptic();
+    onHours(hours.includes(hour) ? hours.filter((h) => h !== hour) : [...hours, hour].sort((a, b) => a - b));
+  };
+
+  return (
+    <div className="pb-40">
+      <TopBar
+        title="Escolha os horários"
+        subtitle="Toque em um ou mais horários"
+        onBack={onBack}
+        step={2}
+        total={3}
+      />
+
+      <button
+        onClick={() => setSheet(true)}
+        className="mt-1 flex w-full items-center gap-3 rounded-3xl bg-white p-2 pr-4 text-left ring-1 ring-sand-200 active:scale-[0.99]"
+      >
+        <span className="relative h-14 w-20 shrink-0 overflow-hidden rounded-2xl">
+          <CourtIllustration type={court.type} number={court.number} className="absolute inset-0 size-full" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-extrabold">{court.name}</span>
+          <CourtBadge type={court.type} className="mt-1 !px-2 !py-0.5 !text-[10px]" />
+        </span>
+        <span className="flex items-center gap-1 text-xs font-bold text-brand">
+          Trocar <ChevronDown className="size-4" />
+        </span>
+      </button>
+
+      <div className="mt-5">
+        <p className="mb-2 text-sm font-bold">{longDate(toKey(date))}</p>
+        <DayStrip days={days} selected={date} onSelect={(d) => (haptic(), onDate(d))} freeByDay={(d) => freeCount(court, d, bookings)} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-ink-soft">
+        <Legend className="bg-white ring-1 ring-sand-300" label="Livre" />
+        <Legend className="bg-brand-gradient" label="Selecionado" />
+        <Legend className="bg-sand-300" label="Ocupado" />
+        <Legend className="bg-ocean-soft ring-1 ring-ocean/40" label="Seu" />
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`${court.id}-${toKey(date)}`}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.18 }}
+          className="mt-5"
+        >
+          {anyFree ? (
+            <SlotGrid slots={slots} selected={hours} onToggle={toggle} />
+          ) : (
+            <div className="rounded-3xl bg-white p-6 text-center ring-1 ring-sand-200">
+              <p className="text-3xl">😕</p>
+              <p className="mt-2 font-bold">Sem horários livres neste dia</p>
+              <p className="mt-1 text-sm text-ink-soft">Tente outro dia ou outra quadra.</p>
+              <button onClick={() => setSheet(true)} className="mt-4 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white">
+                Ver outras quadras
+              </button>
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {hours.length > 0 && (
+          <motion.div
+            initial={{ y: 120 }}
+            animate={{ y: 0 }}
+            exit={{ y: 120 }}
+            transition={{ type: "spring", damping: 28, stiffness: 320 }}
+            className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-[480px] px-4 pb-safe"
+          >
+            <div className="rounded-[28px] bg-ink p-3 pl-5 text-white shadow-2xl">
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-white/60">
+                    {hours.length} {hours.length === 1 ? "hora" : "horas"} · {rangesLabel(hours)}
+                  </p>
+                  <motion.p key={total} initial={{ scale: 1.08 }} animate={{ scale: 1 }} className="origin-left text-xl font-extrabold">
+                    {money(total)}
+                  </motion.p>
+                </div>
+                <button onClick={() => onHours([])} aria-label="Limpar seleção" className="grid size-11 place-items-center rounded-full bg-white/10">
+                  <Trash2 className="size-4" />
+                </button>
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={onContinue}
+                  className="flex h-12 items-center gap-2 rounded-full bg-brand-gradient px-5 font-extrabold"
+                >
+                  Continuar <ArrowRight className="size-4" />
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <BottomSheet open={sheet} onClose={() => setSheet(false)} title="Trocar de quadra">
+        <div className="space-y-2.5 pb-2">
+          {COURTS.map((c) => {
+            const free = freeCount(c, date, bookings);
+            const active = c.id === court.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => {
+                  onCourt(c);
+                  setSheet(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-3xl bg-white p-2 pr-4 text-left ring-2 transition ${
+                  active ? "ring-brand" : "ring-transparent"
+                }`}
+              >
+                <span className="relative h-16 w-24 shrink-0 overflow-hidden rounded-2xl">
+                  <CourtIllustration type={c.type} number={c.number} className="absolute inset-0 size-full" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-extrabold">{c.name}</span>
+                  <span className="block text-xs text-ink-soft">
+                    {c.type === "coberta" ? "Coberta" : "Ao ar livre"} · desde {money(minPrice(c))}/h
+                  </span>
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                    free === 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {free} livres
+                </span>
+              </button>
+            );
+          })}
+          {!isSameDay(date, new Date()) && <p className="pt-1 text-center text-xs text-ink-soft">Disponibilidade para {longDate(toKey(date)).toLowerCase()}</p>}
+        </div>
+      </BottomSheet>
+    </div>
+  );
+}
+
+function Legend({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`size-3 rounded-[5px] ${className}`} />
+      {label}
+    </span>
+  );
+}
