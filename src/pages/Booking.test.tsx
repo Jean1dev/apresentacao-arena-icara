@@ -47,6 +47,24 @@ describe("reserva", () => {
     expect(screen.getByText(/mau tempo/)).toBeInTheDocument();
   });
 
+  it("lembra nome e WhatsApp para a próxima reserva", async () => {
+    const first = renderApp();
+    await openCourt(first.user);
+    await first.user.click(await slotButton("20h"));
+    await fillDetails(first.user);
+    await first.user.click(screen.getByRole("button", { name: /Confirmar reserva/ }));
+    await screen.findByText("Reserva confirmada!");
+    first.unmount();
+
+    const { user } = renderApp();
+    expect(await screen.findByText(/, Ana!/)).toBeInTheDocument();
+    await openCourt(user);
+    await user.click(await slotButton("21h"));
+    await user.click(screen.getByRole("button", { name: /Continuar/ }));
+    expect(await screen.findByPlaceholderText("Como te chamamos?")).toHaveValue("Ana Souza");
+    expect(screen.getByPlaceholderText("(48) 99999-9999")).toHaveValue("(48) 99999-9999");
+  });
+
   it("no 409 avisa, volta para os horários e tira o horário que foi tomado", async () => {
     const { user } = renderApp();
     await openCourt(user);
