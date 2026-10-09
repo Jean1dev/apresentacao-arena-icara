@@ -1,41 +1,72 @@
-import { startOfDay } from "date-fns";
+import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getCourt, type Court, type SportId } from "../data/arena";
-import { useBookings } from "../hooks/useBookings";
-import { slotsFor, toKey } from "../lib/availability";
-import { getProfile, saveBooking, saveProfile, type Booking as BookingT } from "../lib/storage";
+import { ApiError, NETWORK_ERROR, TIMEOUT } from "../api/client";
+import { availableSlotsQuery, useCourtSlots, useCourts, useCreateBooking } from "../api/queries";
+import type { Booking as BookingT, Court, Sport } from "../api/types";
 import { CourtStep } from "../components/steps/CourtStep";
-import { DetailsStep, type DetailsForm } from "../components/steps/DetailsStep";
+import { DetailsStep } from "../components/steps/DetailsStep";
 import { SuccessStep } from "../components/steps/SuccessStep";
 import { TimeStep } from "../components/steps/TimeStep";
 import { TabBar } from "../components/TabBar";
-import { useToast } from "../components/Toast";
+import { useToast } from "../components/toastContext";
+import { isUpcoming } from "../domain/booking";
+import { LIMITS, splitApiFieldErrors, toBookingRequest, type DetailsForm, type FormErrors } from "../domain/bookingForm";
+import { freeHours, freeHoursOf, myHoursByDate, toUiDay, totalCents } from "../domain/slots";
+import { DEFAULT_SPORT } from "../domain/sports";
+import { useBookings } from "../hooks/useBookings";
+import { addDaysKey, dateRange, todayKey } from "../lib/businessDate";
+import { getProfile, saveBooking, saveProfile } from "../lib/storage";
 
 type Step = "quadra" | "horarios" | "dados" | "sucesso";
-
-function newCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return "ABR-" + Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
 
 export default function Booking() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const bookings = useBookings();
+  const courts = useCourts();
+  const createBooking = useCreateBooking();
 
-  const [court, setCourt] = useState<Court | null>(null);
-  const [date, setDate] = useState(() => startOfDay(new Date()));
-  const [hours, setHours] = useState<number[]>([]);
+  const today = todayKey();
+  const lastDay = addDaysKey(today, LIMITS.daysAhead);
+  const dates = useMemo(() => dateRange(today, LIMITS.daysAhead + 1), [today]);
+
+  const [courtId, setCourtId] = useState<string | null>(null);
+  const [date, setDate] = useState(today);
+  const [picked, setPicked] = useState<number[]>([]);
   const [confirmed, setConfirmed] = useState<BookingT | null>(null);
-  const [form, setForm] = useState<DetailsForm>(() => ({ ...getProfile(), sport: "beach-tennis", players: 4, notes: "" }));
+  const [form, setForm] = useState<DetailsForm>(() => ({ ...getProfile(), sport: DEFAULT_SPORT, players: 4, notes: "" }));
+  const [serverErrors, setServerErrors] = useState<FormErrors>({});
+
+  const court = courts.data?.find((c) => c.id === courtId) ?? null;
+
+  // Uma chamada cobre a janela inteira de reserva: a faixa de dias e a grade usam o mesmo dado.
+  const slots = useCourtSlots(court?.id, today, lastDay);
+  const days = useMemo(() => {
+    const mine = court ? myHoursByDate(bookings, court.id) : new Map<string, Set<number>>();
+    return new Map((slots.data?.days ?? []).map((d) => [d.date, toUiDay(d, mine)]));
+  }, [slots.data, bookings, court]);
+  const day = days.get(date);
+
+  // A seleção é sempre filtrada pela agenda atual: se alguém reservar um horário
+  // escolhido (ou depois de um 409), ele sai sozinho quando a agenda recarrega.
+  const free = freeHours(day);
+  const hours = day ? picked.filter((h) => free.has(h)) : [];
+  const total = totalCents(day, hours);
 
   // A etapa vive na URL para o botão "voltar" do celular funcionar naturalmente.
   const requested = (params.get("etapa") as Step) || "quadra";
   const step: Step =
-    requested === "sucesso" && confirmed ? "sucesso" : !court || requested === "sucesso" ? "quadra" : requested === "dados" && !hours.length ? "horarios" : requested;
+    requested === "sucesso" && confirmed
+      ? "sucesso"
+      : !court || requested === "sucesso"
+        ? "quadra"
+        : requested === "dados" && !hours.length && !createBooking.isPending
+          ? "horarios"
+          : requested;
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -44,53 +75,71 @@ export default function Booking() {
   const go = (next: Step, replace = false) => navigate(next === "quadra" ? "/" : `/?etapa=${next}`, { replace });
 
   const selectCourt = (c: Court) => {
-    setCourt(c);
-    setHours([]);
+    setCourtId(c.id);
+    setPicked([]);
     go("horarios");
   };
 
   const switchCourt = (c: Court) => {
-    const free = new Set(slotsFor(c, date, bookings).filter((s) => s.status === "livre").map((s) => s.hour));
-    const kept = hours.filter((h) => free.has(h));
-    if (kept.length < hours.length) toast(`${hours.length - kept.length} horário(s) não estão livres na ${c.name}`, "info");
-    setCourt(c);
-    setHours(kept);
+    // O seletor de quadras já carregou os livres do dia; avisa se algo da seleção não cabe na outra quadra.
+    const avail = queryClient.getQueryData(availableSlotsQuery(date).queryKey);
+    if (avail && hours.length) {
+      const freeThere = freeHoursOf(avail.slots, c.id);
+      const lost = hours.filter((h) => !freeThere.has(h)).length;
+      if (lost) toast(`${lost} horário(s) não estão livres na ${c.name}`, "info");
+    }
+    setCourtId(c.id);
   };
 
-  const quickPick = (c: Court, d: Date, hour: number) => {
-    setCourt(c);
-    setDate(startOfDay(d));
-    setHours([hour]);
+  const quickPick = (id: string, dateKey: string, hour: number) => {
+    setCourtId(id);
+    setDate(dateKey);
+    setPicked([hour]);
     go("horarios");
   };
 
-  const total = court ? slotsFor(court, date, bookings).filter((s) => hours.includes(s.hour)).reduce((sum, s) => sum + s.price, 0) : 0;
+  const updateForm = (f: DetailsForm) => {
+    setForm(f);
+    setServerErrors({});
+  };
 
   const confirm = async () => {
     if (!court) return;
-    await new Promise((r) => setTimeout(r, 900)); // simula a chamada ao servidor
-    const booking: BookingT = {
-      id: newCode(),
-      courtId: court.id,
-      date: toKey(date),
-      hours,
-      sport: form.sport,
-      name: form.name.trim(),
-      phone: form.phone,
-      players: form.players,
-      notes: form.notes.trim(),
-      total,
-      createdAt: new Date().toISOString(),
-      status: "confirmada",
-    };
-    saveBooking(booking);
-    saveProfile({ name: booking.name, phone: booking.phone });
-    setConfirmed(booking);
-    setHours([]);
-    go("sucesso", true);
+    setServerErrors({});
+    try {
+      const booking = await createBooking.mutateAsync(toBookingRequest(court.id, date, hours, form));
+      saveBooking(booking);
+      saveProfile({ name: booking.name, whatsapp: form.whatsapp });
+      setConfirmed(booking);
+      setPicked([]);
+      go("sucesso", true);
+    } catch (err) {
+      handleBookingError(err);
+    }
   };
 
-  const upcoming = bookings.filter((b) => b.status === "confirmada" && b.date >= toKey(new Date())).length;
+  const handleBookingError = (err: unknown) => {
+    const code = err instanceof ApiError ? err.code : undefined;
+    if (code === "SLOT_UNAVAILABLE") {
+      toast("Alguém acabou de reservar um desses horários. Escolha de novo.", "error");
+      navigate(-1);
+      return;
+    }
+    if (code === "VALIDATION_ERROR") {
+      const { form: fieldErrors, other } = splitApiFieldErrors((err as ApiError).fields);
+      setServerErrors(fieldErrors);
+      if (other.length) {
+        // Data ou hora fora da janela (ex.: o horário começou enquanto a pessoa preenchia).
+        toast("Esses horários não estão mais disponíveis. Escolha de novo.", "error");
+        navigate(-1);
+      }
+      return;
+    }
+    if (code === NETWORK_ERROR || code === TIMEOUT) toast("Sem conexão com a arena. Tente de novo.", "error");
+    else toast("Algo deu errado. Tente de novo em instantes.", "error");
+  };
+
+  const upcoming = bookings.filter((b) => isUpcoming(b)).length;
 
   return (
     <div className="px-4">
@@ -104,9 +153,8 @@ export default function Booking() {
         >
           {step === "quadra" && (
             <CourtStep
-              bookings={bookings}
               sport={form.sport}
-              onSport={(sport: SportId) => setForm((f) => ({ ...f, sport }))}
+              onSport={(sport: Sport) => setForm((f) => ({ ...f, sport }))}
               onSelectCourt={selectCourt}
               onQuickPick={quickPick}
               firstName={form.name.trim().split(" ")[0]}
@@ -115,27 +163,32 @@ export default function Booking() {
           {step === "horarios" && court && (
             <TimeStep
               court={court}
+              courts={courts.data ?? []}
+              dates={dates}
               date={date}
+              days={days}
+              slotsState={{ isPending: slots.isPending, isError: slots.isError, refetch: () => void slots.refetch() }}
               hours={hours}
-              bookings={bookings}
               onBack={() => navigate(-1)}
               onDate={(d) => {
                 setDate(d);
-                setHours([]);
+                setPicked([]);
               }}
-              onHours={setHours}
+              onHours={setPicked}
               onCourt={switchCourt}
               onContinue={() => go("dados")}
             />
           )}
           {step === "dados" && court && (
             <DetailsStep
-              court={getCourt(court.id)}
-              dateKey={toKey(date)}
+              court={court}
+              dateKey={date}
               hours={hours}
               total={total}
               form={form}
-              onForm={setForm}
+              serverErrors={serverErrors}
+              submitting={createBooking.isPending}
+              onForm={updateForm}
               onBack={() => navigate(-1)}
               onConfirm={confirm}
             />
@@ -145,7 +198,7 @@ export default function Booking() {
               booking={confirmed}
               onNew={() => {
                 setConfirmed(null);
-                setCourt(null);
+                setCourtId(null);
                 go("quadra", true);
               }}
             />

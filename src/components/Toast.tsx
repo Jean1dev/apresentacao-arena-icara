@@ -1,17 +1,13 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Info } from "lucide-react";
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
+import { ToastContext, type Tone } from "./toastContext";
 
-type Tone = "success" | "info";
 interface ToastItem {
   id: number;
   message: string;
   tone: Tone;
 }
-
-const ToastContext = createContext<(message: string, tone?: Tone) => void>(() => {});
-
-export const useToast = () => useContext(ToastContext);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -20,7 +16,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback((message: string, tone: Tone = "success") => {
     const id = ++nextId.current;
     setToasts((t) => [...t.slice(-1), { id, message, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === "success" ? 2600 : 4000);
   }, []);
 
   return (
@@ -31,15 +27,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {toasts.map((t) => (
             <motion.div
               key={t.id}
+              role="status"
               initial={{ opacity: 0, y: -24, scale: 0.96 }}
               animate={{ opacity: 1, y: 8, scale: 1 }}
               exit={{ opacity: 0, y: -16, scale: 0.96 }}
               className="flex items-center gap-2 rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white shadow-xl"
             >
               {t.tone === "success" ? (
-                <CheckCircle2 className="size-4 text-emerald-300" />
+                <CheckCircle2 className="size-4 shrink-0 text-emerald-300" />
+              ) : t.tone === "error" ? (
+                <AlertCircle className="size-4 shrink-0 text-red-300" />
               ) : (
-                <Info className="size-4 text-sky-300" />
+                <Info className="size-4 shrink-0 text-sky-300" />
               )}
               {t.message}
             </motion.div>

@@ -1,9 +1,11 @@
-import type { CourtType } from "../data/arena";
+import { useId } from "react";
+import type { CourtType } from "../api/types";
 
 /** Quadra de areia vista de cima: coberta ganha a lona, descoberta ganha o sol. */
-export function CourtIllustration({ type, number, className = "" }: { type: CourtType; number: number; className?: string }) {
-  const covered = type === "coberta";
-  const id = `c${number}`;
+export function CourtIllustration({ type, className = "" }: { type: CourtType; className?: string }) {
+  const covered = type === "INDOOR";
+  // Ids dos gradientes precisam ser únicos na página.
+  const id = useId().replace(/:/g, "");
   return (
     <svg viewBox="0 0 320 160" className={className} aria-hidden="true" preserveAspectRatio="xMidYMid slice">
       <defs>
