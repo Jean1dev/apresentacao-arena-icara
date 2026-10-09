@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Check, Moon, Sun, Sunrise } from "lucide-react";
-import type { Slot } from "../lib/availability";
+import type { UiSlot } from "../domain/slots";
 import { hh, money } from "../lib/format";
 
 const PERIODS = [
@@ -10,7 +10,7 @@ const PERIODS = [
 ];
 
 interface Props {
-  slots: Slot[];
+  slots: UiSlot[];
   selected: number[];
   onToggle: (hour: number) => void;
 }
@@ -19,7 +19,7 @@ export function SlotGrid({ slots, selected, onToggle }: Props) {
   return (
     <div className="space-y-6">
       {PERIODS.map(({ label, icon: Icon, from, to }) => {
-        const list = slots.filter((s) => s.hour >= from && s.hour < to && s.status !== "passado");
+        const list = slots.filter((s) => s.hour >= from && s.hour < to);
         if (!list.length) return null;
         const free = list.filter((s) => s.status === "livre").length;
         return (
@@ -28,11 +28,6 @@ export function SlotGrid({ slots, selected, onToggle }: Props) {
               <h3 className="flex items-center gap-2 text-sm font-bold">
                 <Icon className="size-4 text-ink-soft" />
                 {label}
-                {label === "Noite" && (
-                  <span className="rounded-full bg-night-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-night">
-                    tarifa noturna
-                  </span>
-                )}
               </h3>
               <span className="text-xs font-medium text-ink-soft">{free} livres</span>
             </div>
@@ -48,7 +43,7 @@ export function SlotGrid({ slots, selected, onToggle }: Props) {
   );
 }
 
-function SlotButton({ slot, active, onToggle }: { slot: Slot; active: boolean; onToggle: () => void }) {
+function SlotButton({ slot, active, onToggle }: { slot: UiSlot; active: boolean; onToggle: () => void }) {
   if (slot.status === "ocupado") {
     return (
       <div className="flex h-[62px] flex-col items-center justify-center rounded-2xl bg-sand-200/60 text-ink-soft/60">
@@ -84,7 +79,7 @@ function SlotButton({ slot, active, onToggle }: { slot: Slot; active: boolean; o
         </motion.span>
       )}
       <span className="text-[15px] font-extrabold">{hh(slot.hour)}</span>
-      <span className={`text-[11px] font-semibold ${active ? "text-white/85" : "text-ink-soft"}`}>{money(slot.price)}</span>
+      <span className={`text-[11px] font-semibold ${active ? "text-white/85" : "text-ink-soft"}`}>{money(slot.priceCents)}</span>
     </motion.button>
   );
 }

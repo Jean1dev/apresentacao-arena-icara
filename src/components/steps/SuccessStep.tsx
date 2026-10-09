@@ -1,33 +1,34 @@
 import { motion } from "framer-motion";
-import { CalendarPlus, Check, Share2 } from "lucide-react";
-import { useMemo } from "react";
+import { CalendarPlus, Check, CloudRain, Info as InfoIcon, Share2 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { getCourt, getSport } from "../../data/arena";
-import { bookingSummary, downloadIcs, hh, longDate, money, ranges } from "../../lib/format";
-import type { Booking } from "../../lib/storage";
-import { CourtBadge } from "../CourtBadge";
-import { useToast } from "../Toast";
+import type { Booking } from "../../api/types";
+import { bookingHours, shortId } from "../../domain/booking";
+import { BOOKING_POLICY } from "../../domain/policy";
+import { getSport } from "../../domain/sports";
+import { bookingSummary, downloadIcs, longDate, money, rangesLabel } from "../../lib/format";
+import { useToast } from "../toastContext";
 
 const COLORS = ["#1AA9DE", "#8CC63F", "#13284A", "#4FC3E8", "#B5DA6A"];
 
+function makeConfetti() {
+  return Array.from({ length: 36 }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    delay: Math.random() * 0.4,
+    rotate: Math.random() * 720 - 360,
+    color: COLORS[i % COLORS.length],
+    size: 6 + Math.random() * 6,
+    duration: 1.6 + Math.random() * 1.2,
+  }));
+}
+
 export function SuccessStep({ booking, onNew }: { booking: Booking; onNew: () => void }) {
   const toast = useToast();
-  const court = getCourt(booking.courtId);
   const sport = getSport(booking.sport);
 
-  const confetti = useMemo(
-    () =>
-      Array.from({ length: 36 }, (_, i) => ({
-        id: i,
-        x: Math.random() * 100,
-        delay: Math.random() * 0.4,
-        rotate: Math.random() * 720 - 360,
-        color: COLORS[i % COLORS.length],
-        size: 6 + Math.random() * 6,
-        duration: 1.6 + Math.random() * 1.2,
-      })),
-    [],
-  );
+  // Sorteado uma vez por montagem.
+  const [confetti] = useState(makeConfetti);
 
   const share = async () => {
     const text = bookingSummary(booking);
@@ -66,12 +67,18 @@ export function SuccessStep({ booking, onNew }: { booking: Booking; onNew: () =>
         >
           <Check className="size-12 text-white" strokeWidth={3} />
         </motion.div>
-        <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mt-6 text-3xl font-extrabold tracking-tight">
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="mt-6 text-3xl font-extrabold tracking-tight"
+        >
           Reserva confirmada!
         </motion.h1>
         <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="mt-2 max-w-xs text-ink-soft">
-          Te vemos na areia, {booking.name.split(" ")[0]} {sport.emoji}
-          <br />A confirmação vai pro seu WhatsApp.
+          Te vemos na areia, {booking.name.split(" ")[0]} {sport?.emoji}
+          <br />
+          Guarde o código para falar com a arena.
         </motion.p>
 
         <motion.div
@@ -81,26 +88,31 @@ export function SuccessStep({ booking, onNew }: { booking: Booking; onNew: () =>
           className="mt-8 w-full overflow-hidden rounded-[28px] bg-white text-left ring-1 ring-sand-200"
         >
           <div className="bg-ink p-4 text-white">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-widest text-white/60">Código</span>
-              <CourtBadge type={court.type} className="!bg-white/15 !text-white" />
-            </div>
-            <p className="mt-1 font-mono text-2xl font-bold tracking-wider">{booking.id}</p>
+            <span className="text-xs font-bold uppercase tracking-widest text-white/60">Código</span>
+            <p className="mt-1 font-mono text-2xl font-bold tracking-wider">{shortId(booking.id)}</p>
           </div>
           <div className="grid grid-cols-2 gap-4 p-4">
-            <Info label="Quadra" value={court.name} />
-            <Info label="Modalidade" value={sport.name} />
+            <Info label="Quadra" value={booking.courtName} />
+            <Info label="Modalidade" value={sport?.name ?? "—"} />
             <Info label="Data" value={longDate(booking.date)} wide />
-            <Info label="Horário" value={ranges(booking.hours).map(([a, b]) => `${hh(a)}–${hh(b)}`).join(" · ")} />
-            <Info label="Total" value={money(booking.total)} />
+            <Info label="Horário" value={rangesLabel(bookingHours(booking))} />
+            <Info label="Total" value={money(booking.totalPriceCents)} />
           </div>
         </motion.div>
 
+        <BookingPolicy />
+
         <div className="mt-4 grid w-full grid-cols-2 gap-2">
-          <button onClick={() => downloadIcs(booking)} className="flex h-12 items-center justify-center gap-2 rounded-full bg-white text-sm font-bold ring-1 ring-sand-200 active:scale-[0.98]">
+          <button
+            onClick={() => downloadIcs(booking)}
+            className="flex h-12 items-center justify-center gap-2 rounded-full bg-white text-sm font-bold ring-1 ring-sand-200 active:scale-[0.98]"
+          >
             <CalendarPlus className="size-4" /> Agenda
           </button>
-          <button onClick={share} className="flex h-12 items-center justify-center gap-2 rounded-full bg-white text-sm font-bold ring-1 ring-sand-200 active:scale-[0.98]">
+          <button
+            onClick={share}
+            className="flex h-12 items-center justify-center gap-2 rounded-full bg-white text-sm font-bold ring-1 ring-sand-200 active:scale-[0.98]"
+          >
             <Share2 className="size-4" /> Chamar a galera
           </button>
         </div>
@@ -124,5 +136,31 @@ function Info({ label, value, wide }: { label: string; value: string; wide?: boo
       <p className="text-[11px] font-bold uppercase tracking-wider text-ink-soft">{label}</p>
       <p className="mt-0.5 font-bold">{value}</p>
     </div>
+  );
+}
+
+function BookingPolicy() {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.45 }}
+      aria-labelledby="booking-policy"
+      className="mt-4 w-full rounded-[28px] bg-ocean-soft p-4 text-left text-ocean"
+    >
+      <h2 id="booking-policy" className="flex items-center gap-2 text-sm font-extrabold">
+        <InfoIcon className="size-4 shrink-0" />
+        {BOOKING_POLICY.title}
+      </h2>
+      <ul className="mt-3 list-disc space-y-2 pl-5 text-sm font-medium">
+        {BOOKING_POLICY.rules.map((rule) => (
+          <li key={rule}>{rule}</li>
+        ))}
+      </ul>
+      <p className="mt-3 flex items-start gap-2 rounded-2xl bg-white/70 p-3 text-sm font-semibold">
+        <CloudRain className="mt-0.5 size-4 shrink-0" />
+        {BOOKING_POLICY.weatherNote}
+      </p>
+    </motion.section>
   );
 }

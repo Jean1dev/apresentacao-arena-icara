@@ -16,7 +16,11 @@ export function TabBar({ badge = 0 }: { badge?: number }) {
             {({ isActive }) => (
               <span className={`relative flex h-12 items-center justify-center gap-2 text-sm font-bold ${isActive ? "text-ink" : "text-white/70"}`}>
                 {isActive && (
-                  <motion.span layoutId="tab-pill" className="absolute inset-0 rounded-full bg-sand-100" transition={{ type: "spring", bounce: 0.2, duration: 0.45 }} />
+                  <motion.span
+                    layoutId="tab-pill"
+                    className="absolute inset-0 rounded-full bg-sand-100"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.45 }}
+                  />
                 )}
                 <Icon className="relative size-[18px]" />
                 <span className="relative">{label}</span>

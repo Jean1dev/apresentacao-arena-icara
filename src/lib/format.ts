@@ -1,11 +1,14 @@
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { getCourt, getSport } from "../data/arena";
-import type { Booking } from "./storage";
+import type { Booking, BookingSlot } from "../api/types";
+import { bookingHours, shortId } from "../domain/booking";
+import { getSport } from "../domain/sports";
 
-const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const brlCents = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 });
 
-export const money = (value: number) => brl.format(value);
+/** Centavos -> "R$ 130" (ou "R$ 125,50" quando há centavos). */
+export const money = (cents: number) => (cents % 100 === 0 ? brl : brlCents).format(cents / 100);
 
 export const hh = (hour: number) => `${String(hour).padStart(2, "0")}h`;
 
@@ -26,10 +29,7 @@ export const rangesLabel = (hours: number[]) =>
     .map(([a, b]) => `${hh(a)}–${hh(b)}`)
     .join(" · ");
 
-export const longDate = (dateKey: string) =>
-  capitalize(format(parseISO(dateKey), "EEEE, d 'de' MMMM", { locale: ptBR }));
-
-export const shortDate = (dateKey: string) => format(parseISO(dateKey), "dd/MM", { locale: ptBR });
+export const longDate = (dateKey: string) => capitalize(format(parseISO(dateKey), "EEEE, d 'de' MMMM", { locale: ptBR }));
 
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -42,32 +42,60 @@ export function maskPhone(value: string) {
 }
 
 export function bookingSummary(b: Booking) {
-  const court = getCourt(b.courtId);
   const sport = getSport(b.sport);
-  return `🏖️ Reserva Arena Brasil\n${sport.emoji} ${sport.name} · ${court.name} (${court.type})\n📅 ${longDate(b.date)}\n⏰ ${rangesLabel(b.hours)}\n💰 ${money(b.total)}`;
+  return [
+    "🏖️ Reserva Arena Brasil",
+    `${sport ? `${sport.emoji} ${sport.name} · ` : ""}${b.courtName}`,
+    `📅 ${longDate(b.date)}`,
+    `⏰ ${rangesLabel(bookingHours(b))}`,
+    `💰 ${money(b.totalPriceCents)}`,
+  ].join("\n");
 }
 
-function icsStamp(dateKey: string, hour: number) {
-  return `${dateKey.replace(/-/g, "")}T${String(hour).padStart(2, "0")}0000`;
+/** Mensagem pronta para pedir o cancelamento à arena pelo WhatsApp. */
+export function cancelRequestUrl(b: Booking, arenaWhatsapp: string) {
+  const text = [
+    "Olá! Quero cancelar minha reserva na Arena Brasil.",
+    `Código: ${shortId(b.id)}`,
+    `${b.courtName} · ${longDate(b.date)} · ${rangesLabel(bookingHours(b))}`,
+    `Nome: ${b.name}`,
+  ].join("\n");
+  return `https://wa.me/${arenaWhatsapp}?text=${encodeURIComponent(text)}`;
 }
 
-export function downloadIcs(b: Booking) {
-  const court = getCourt(b.courtId);
+/** Junta horários seguidos ([20h–21h, 21h–22h] -> [20h–22h]). */
+function mergeSlots(slots: BookingSlot[]) {
+  const out: { start: string; end: string }[] = [];
+  for (const s of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
+    const last = out[out.length - 1];
+    if (last && last.end === s.start) last.end = s.end;
+    else out.push({ start: s.start, end: s.end });
+  }
+  return out;
+}
+
+/** RFC 3339 com offset -> data UTC do iCalendar (20261008T230000Z). */
+const icsUtc = (rfc3339: string) => new Date(rfc3339).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+export function bookingIcs(b: Booking, now = new Date()) {
   const sport = getSport(b.sport);
-  const events = ranges(b.hours).map(
-    ([start, end], i) => [
+  const events = mergeSlots(b.slots).map((range, i) =>
+    [
       "BEGIN:VEVENT",
       `UID:${b.id}-${i}@arena-brasil`,
-      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").split(".")[0]}Z`,
-      `DTSTART:${icsStamp(b.date, start)}`,
-      `DTEND:${icsStamp(b.date, end)}`,
-      `SUMMARY:${sport.name} · ${court.name} – Arena Brasil`,
+      `DTSTAMP:${icsUtc(now.toISOString())}`,
+      `DTSTART:${icsUtc(range.start)}`,
+      `DTEND:${icsUtc(range.end)}`,
+      `SUMMARY:${sport ? `${sport.name} · ` : ""}${b.courtName} – Arena Brasil`,
       "LOCATION:Arena Brasil",
       "END:VEVENT",
     ].join("\r\n"),
   );
-  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Arena Brasil//Reservas//PT", ...events, "END:VCALENDAR"].join("\r\n");
-  const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Arena Brasil//Reservas//PT", ...events, "END:VCALENDAR"].join("\r\n");
+}
+
+export function downloadIcs(b: Booking) {
+  const url = URL.createObjectURL(new Blob([bookingIcs(b)], { type: "text/calendar" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = `arena-brasil-${b.date}.ics`;

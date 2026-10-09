@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "unicorn", "oxc", "import", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+    "react/react-in-jsx-scope": "off",
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": "error",
+    "import/no-cycle": "error",
+    "eqeqeq": "error",
+    "no-console": [
+      "warn",
+      {
+        "allow": ["warn", "error"]
+      }
+    ],
+    "unicorn/no-array-sort": "off",
+    "react/exhaustive-effect-dependencies": "off"
+  },
+  "ignorePatterns": ["dist", "node_modules", "public/mockServiceWorker.js"],
+  "overrides": [
+    {
+      "files": ["src/main.tsx", "src/test/setup.ts"],
+      "rules": {
+        "import/no-unassigned-import": "off"
+      }
+    }
+  ]
+}

@@ -1,18 +1,20 @@
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarPlus, Share2, X } from "lucide-react";
+import { CalendarPlus, MessageCircle, Share2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useCourts } from "../api/queries";
+import type { Booking, CourtType } from "../api/types";
 import { BottomSheet } from "../components/BottomSheet";
 import { CourtBadge } from "../components/CourtBadge";
 import { TabBar } from "../components/TabBar";
-import { useToast } from "../components/Toast";
-import { getCourt, getSport } from "../data/arena";
+import { useToast } from "../components/toastContext";
+import { env } from "../config/env";
+import { bookingHours, byStart, isUpcoming, shortId } from "../domain/booking";
+import { getSport } from "../domain/sports";
 import { useBookings } from "../hooks/useBookings";
-import { toKey } from "../lib/availability";
-import { bookingSummary, downloadIcs, longDate, money, rangesLabel } from "../lib/format";
-import { cancelBooking, type Booking } from "../lib/storage";
+import { bookingSummary, cancelRequestUrl, downloadIcs, longDate, money, rangesLabel } from "../lib/format";
 
 type Tab = "proximas" | "historico";
 
@@ -21,12 +23,11 @@ export default function MyBookings() {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("proximas");
   const [toCancel, setToCancel] = useState<Booking | null>(null);
-  const today = toKey(new Date());
+  const courts = useCourts();
+  const courtType = (courtId: string) => courts.data?.find((c) => c.id === courtId)?.type;
 
-  const upcoming = bookings
-    .filter((b) => b.status === "confirmada" && b.date >= today)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.hours[0] - b.hours[0]);
-  const history = bookings.filter((b) => !upcoming.includes(b));
+  const upcoming = bookings.filter((b) => isUpcoming(b)).sort(byStart);
+  const history = bookings.filter((b) => !isUpcoming(b)).sort((a, b) => byStart(b, a));
   const list = tab === "proximas" ? upcoming : history;
 
   return (
@@ -56,8 +57,9 @@ export default function MyBookings() {
             <BookingCard
               key={b.id}
               booking={b}
+              courtType={courtType(b.courtId)}
               active={tab === "proximas"}
-              onCancel={() => setToCancel(b)}
+              onCancel={env.arenaWhatsapp ? () => setToCancel(b) : undefined}
               onShare={async () => {
                 const text = bookingSummary(b);
                 try {
@@ -78,7 +80,7 @@ export default function MyBookings() {
             <p className="text-5xl">{tab === "proximas" ? "🏐" : "🗂️"}</p>
             <p className="mt-3 text-lg font-extrabold">{tab === "proximas" ? "Nenhum jogo marcado" : "Nada por aqui ainda"}</p>
             <p className="mt-1 text-sm text-ink-soft">
-              {tab === "proximas" ? "Reserve uma quadra em menos de 1 minuto." : "Reservas passadas e canceladas aparecem aqui."}
+              {tab === "proximas" ? "Reserve uma quadra em menos de 1 minuto." : "Reservas já jogadas aparecem aqui."}
             </p>
             {tab === "proximas" && (
               <Link to="/" className="mt-5 inline-flex h-12 items-center rounded-full bg-brand-gradient px-6 font-extrabold text-white">
@@ -89,27 +91,26 @@ export default function MyBookings() {
         )}
       </div>
 
-      <BottomSheet open={!!toCancel} onClose={() => setToCancel(null)} title="Cancelar reserva?">
-        {toCancel && (
+      <BottomSheet open={!!toCancel} onClose={() => setToCancel(null)} title="Pedir cancelamento?">
+        {toCancel && env.arenaWhatsapp && (
           <div className="pb-2">
             <p className="text-ink-soft">
-              {getCourt(toCancel.courtId).name} · {longDate(toCancel.date)} · {rangesLabel(toCancel.hours)}
+              {toCancel.courtName} · {longDate(toCancel.date)} · {rangesLabel(bookingHours(toCancel))}
             </p>
-            <p className="mt-2 text-sm text-ink-soft">Os horários voltam a ficar livres para outros alunos.</p>
+            <p className="mt-2 text-sm text-ink-soft">O cancelamento é feito pela arena. Vamos abrir o WhatsApp com a mensagem pronta.</p>
             <div className="mt-6 grid grid-cols-2 gap-2">
               <button onClick={() => setToCancel(null)} className="h-12 rounded-full bg-white font-bold ring-1 ring-sand-200">
-                Manter
+                Voltar
               </button>
-              <button
-                onClick={() => {
-                  cancelBooking(toCancel.id);
-                  setToCancel(null);
-                  toast("Reserva cancelada");
-                }}
-                className="h-12 rounded-full bg-danger font-bold text-white"
+              <a
+                href={cancelRequestUrl(toCancel, env.arenaWhatsapp)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setToCancel(null)}
+                className="flex h-12 items-center justify-center rounded-full bg-[#25D366] font-bold text-white"
               >
-                Sim, cancelar
-              </button>
+                Abrir WhatsApp
+              </a>
             </div>
           </div>
         )}
@@ -120,18 +121,26 @@ export default function MyBookings() {
   );
 }
 
-function BookingCard({ booking, active, onCancel, onShare }: { booking: Booking; active: boolean; onCancel: () => void; onShare: () => void }) {
-  const court = getCourt(booking.courtId);
+interface CardProps {
+  booking: Booking;
+  courtType?: CourtType;
+  active: boolean;
+  /** Ausente quando o WhatsApp da arena não está configurado. */
+  onCancel?: () => void;
+  onShare: () => void;
+}
+
+function BookingCard({ booking, courtType, active, onCancel, onShare }: CardProps) {
   const sport = getSport(booking.sport);
   const d = parseISO(booking.date);
-  const cancelled = booking.status === "cancelada";
+  const details = [sport && `${sport.emoji} ${sport.name}`, booking.players && `${booking.players} jogadores`, money(booking.totalPriceCents)].filter(Boolean);
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -40 }}
-      className={`overflow-hidden rounded-[28px] bg-white ring-1 ring-sand-200 ${cancelled ? "opacity-60" : ""}`}
+      className="overflow-hidden rounded-[28px] bg-white ring-1 ring-sand-200"
     >
       <div className="flex gap-4 p-4">
         <div className={`flex w-16 shrink-0 flex-col items-center justify-center rounded-2xl py-2 ${active ? "bg-brand-gradient text-white" : "bg-sand-100"}`}>
@@ -141,31 +150,27 @@ function BookingCard({ booking, active, onCancel, onShare }: { booking: Booking;
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-lg font-extrabold">{court.name}</p>
-            {cancelled ? (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">Cancelada</span>
-            ) : (
-              <CourtBadge type={court.type} className="!px-2 !py-0.5 !text-[10px]" />
-            )}
+            <p className="truncate text-lg font-extrabold">{booking.courtName}</p>
+            {courtType && <CourtBadge type={courtType} className="!px-2 !py-0.5 !text-[10px]" />}
           </div>
-          <p className="text-sm font-semibold">{rangesLabel(booking.hours)}</p>
-          <p className="mt-0.5 text-xs text-ink-soft">
-            {sport.emoji} {sport.name} · {booking.players} jogadores · {money(booking.total)}
-          </p>
-          <p className="mt-1 font-mono text-[11px] text-ink-soft">{booking.id}</p>
+          <p className="text-sm font-semibold">{rangesLabel(bookingHours(booking))}</p>
+          <p className="mt-0.5 text-xs text-ink-soft">{details.join(" · ")}</p>
+          <p className="mt-1 font-mono text-[11px] text-ink-soft">{shortId(booking.id)}</p>
         </div>
       </div>
       {active && (
-        <div className="grid grid-cols-3 border-t border-sand-200 text-xs font-bold">
+        <div className={`grid border-t border-sand-200 text-xs font-bold ${onCancel ? "grid-cols-3" : "grid-cols-2"}`}>
           <button onClick={() => downloadIcs(booking)} className="flex h-11 items-center justify-center gap-1.5 active:bg-sand-100">
             <CalendarPlus className="size-4" /> Agenda
           </button>
-          <button onClick={onShare} className="flex h-11 items-center justify-center gap-1.5 border-x border-sand-200 active:bg-sand-100">
+          <button onClick={onShare} className="flex h-11 items-center justify-center gap-1.5 border-l border-sand-200 active:bg-sand-100">
             <Share2 className="size-4" /> Enviar
           </button>
-          <button onClick={onCancel} className="flex h-11 items-center justify-center gap-1.5 text-danger active:bg-red-50">
-            <X className="size-4" /> Cancelar
-          </button>
+          {onCancel && (
+            <button onClick={onCancel} className="flex h-11 items-center justify-center gap-1.5 border-l border-sand-200 text-danger active:bg-red-50">
+              <MessageCircle className="size-4" /> Cancelar
+            </button>
+          )}
         </div>
       )}
     </motion.div>

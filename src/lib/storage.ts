@@ -1,34 +1,28 @@
-import type { SportId } from "../data/arena";
+import type { Booking } from "../api/types";
 
-export interface Booking {
-  id: string;
-  courtId: string;
-  date: string; // yyyy-MM-dd
-  hours: number[];
-  sport: SportId;
-  name: string;
-  phone: string;
-  players: number;
-  notes: string;
-  total: number;
-  createdAt: string;
-  status: "confirmada" | "cancelada";
-}
+/**
+ * Histórico deste aparelho. A API não tem leitura pública de reservas, então
+ * guardamos a resposta da criação (dados reais do servidor).
+ */
 
 export interface Profile {
   name: string;
-  phone: string;
+  whatsapp: string;
 }
 
-const BOOKINGS_KEY = "arena-brasil:bookings";
+const BOOKINGS_KEY = "arena-brasil:bookings:v2";
 const PROFILE_KEY = "arena-brasil:profile";
+/** Reservas falsas do protótipo, que não existem no servidor. */
+const LEGACY_KEYS = ["arena-brasil:bookings"];
 
-function read<T>(key: string, fallback: T): T {
+export const STORAGE_EVENT = "arena-storage";
+
+function read(key: string): unknown {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    return raw ? JSON.parse(raw) : undefined;
   } catch {
-    return fallback;
+    return undefined;
   }
 }
 
@@ -36,30 +30,39 @@ function write(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    /* modo privado / storage cheio: o protótipo segue funcionando em memória */
+    /* modo privado / storage cheio: o app segue funcionando em memória */
   }
-  window.dispatchEvent(new Event("arena-storage"));
+  window.dispatchEvent(new Event(STORAGE_EVENT));
+}
+
+function isBooking(value: unknown): value is Booking {
+  const b = value as Booking;
+  return !!b && typeof b.id === "string" && typeof b.date === "string" && Array.isArray(b.slots) && b.slots.length > 0;
 }
 
 export function getBookings(): Booking[] {
-  return read<Booking[]>(BOOKINGS_KEY, []);
+  const list = read(BOOKINGS_KEY);
+  return Array.isArray(list) ? list.filter(isBooking) : [];
 }
 
 export function saveBooking(booking: Booking) {
-  write(BOOKINGS_KEY, [booking, ...getBookings()]);
-}
-
-export function cancelBooking(id: string) {
-  write(
-    BOOKINGS_KEY,
-    getBookings().map((b) => (b.id === id ? { ...b, status: "cancelada" } : b)),
-  );
+  write(BOOKINGS_KEY, [booking, ...getBookings().filter((b) => b.id !== booking.id)]);
 }
 
 export function getProfile(): Profile {
-  return read<Profile>(PROFILE_KEY, { name: "", phone: "" });
+  const p = read(PROFILE_KEY) as (Partial<Profile> & { phone?: string }) | undefined;
+  // `phone` é o nome do campo no protótipo.
+  return { name: p?.name ?? "", whatsapp: p?.whatsapp ?? p?.phone ?? "" };
 }
 
 export function saveProfile(profile: Profile) {
   write(PROFILE_KEY, profile);
+}
+
+export function dropLegacyData() {
+  try {
+    LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* sem storage */
+  }
 }

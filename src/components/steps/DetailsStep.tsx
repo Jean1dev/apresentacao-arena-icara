@@ -1,19 +1,15 @@
 import { motion } from "framer-motion";
 import { CalendarDays, Clock, Loader2, MapPin, ShieldCheck, Users } from "lucide-react";
 import { useState } from "react";
-import { SPORTS, type Court, type SportId } from "../../data/arena";
+import type { Court } from "../../api/types";
+import { LIMITS, validateForm, type DetailsForm, type FormErrors } from "../../domain/bookingForm";
+import { courtCopy } from "../../domain/court";
+import { SPORTS } from "../../domain/sports";
 import { haptic, hh, longDate, maskPhone, money, ranges } from "../../lib/format";
-import type { Profile } from "../../lib/storage";
 import { CourtBadge } from "../CourtBadge";
 import { CourtIllustration } from "../CourtIllustration";
 import { Stepper } from "../Stepper";
 import { TopBar } from "../TopBar";
-
-export interface DetailsForm extends Profile {
-  sport: SportId;
-  players: number;
-  notes: string;
-}
 
 interface Props {
   court: Court;
@@ -21,28 +17,28 @@ interface Props {
   hours: number[];
   total: number;
   form: DetailsForm;
+  /** Erros de campo devolvidos pela API na última tentativa. */
+  serverErrors: FormErrors;
+  submitting: boolean;
   onForm: (f: DetailsForm) => void;
   onBack: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: () => void;
 }
 
-export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack, onConfirm }: Props) {
+export function DetailsStep({ court, dateKey, hours, total, form, serverErrors, submitting, onForm, onBack, onConfirm }: Props) {
   const [touched, setTouched] = useState(false);
-  const [loading, setLoading] = useState(false);
   const set = <K extends keyof DetailsForm>(key: K, value: DetailsForm[K]) => onForm({ ...form, [key]: value });
 
-  const nameError = form.name.trim().length < 2 ? "Conta pra gente seu nome" : "";
-  const phoneDigits = form.phone.replace(/\D/g, "").length;
-  const phoneError = phoneDigits < 10 ? "WhatsApp com DDD, por favor" : "";
+  const clientErrors = validateForm(form);
+  const errors: FormErrors = { ...(touched ? clientErrors : {}), ...serverErrors };
 
-  const submit = async () => {
+  const submit = () => {
     setTouched(true);
-    if (nameError || phoneError) {
+    if (Object.keys(clientErrors).length) {
       haptic(40);
       return;
     }
-    setLoading(true);
-    await onConfirm();
+    onConfirm();
   };
 
   return (
@@ -52,7 +48,7 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
       {/* Resumo estilo ingresso */}
       <div className="relative mt-1 overflow-hidden rounded-[28px] bg-white ring-1 ring-sand-200">
         <div className="relative h-24">
-          <CourtIllustration type={court.type} number={court.number} className="absolute inset-0 size-full" />
+          <CourtIllustration type={court.type} className="absolute inset-0 size-full" />
           <CourtBadge type={court.type} className="absolute left-3 top-3" />
         </div>
         <div className="space-y-3 p-4">
@@ -67,7 +63,7 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
               ))}
             </span>
           </Row>
-          <Row icon={MapPin}>Arena Brasil · {court.type === "coberta" ? "área coberta" : "área externa"}</Row>
+          <Row icon={MapPin}>Arena Brasil · {courtCopy(court.type).area}</Row>
         </div>
         <div className="relative flex items-center">
           <span className="absolute -left-3 size-6 rounded-full bg-sand-100" />
@@ -91,6 +87,7 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
               <motion.button
                 key={s.id}
                 type="button"
+                aria-pressed={active}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => (haptic(), set("sport", s.id))}
                 className={`flex flex-col items-center gap-1 rounded-2xl py-3 text-xs font-bold transition ${
@@ -106,26 +103,27 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
       </section>
 
       <section className="mt-6 space-y-4">
-        <Field label="Seu nome" error={touched ? nameError : ""}>
+        <Field label="Seu nome" error={errors.name}>
           <input
             value={form.name}
+            maxLength={LIMITS.nameMax}
             onChange={(e) => set("name", e.target.value)}
             autoComplete="name"
             placeholder="Como te chamamos?"
             className="input"
           />
         </Field>
-        <Field label="WhatsApp" hint="Enviamos a confirmação por aqui" error={touched ? phoneError : ""}>
+        <Field label="WhatsApp" hint="Para a arena falar com você" error={errors.whatsapp}>
           <input
-            value={form.phone}
-            onChange={(e) => set("phone", maskPhone(e.target.value))}
+            value={form.whatsapp}
+            onChange={(e) => set("whatsapp", maskPhone(e.target.value))}
             inputMode="tel"
             autoComplete="tel"
             placeholder="(48) 99999-9999"
             className="input"
           />
         </Field>
-        <div className="flex items-center justify-between rounded-2xl bg-white p-3 pl-4 ring-1 ring-sand-200">
+        <div className={`flex items-center justify-between rounded-2xl bg-white p-3 pl-4 ring-1 ${errors.players ? "ring-2 ring-danger" : "ring-sand-200"}`}>
           <span className="flex items-center gap-2.5">
             <Users className="size-5 text-ink-soft" />
             <span>
@@ -133,11 +131,12 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
               <span className="block text-xs text-ink-soft">{money(Math.round(total / form.players))} por pessoa</span>
             </span>
           </span>
-          <Stepper value={form.players} min={1} max={8} onChange={(v) => set("players", v)} />
+          <Stepper value={form.players} min={LIMITS.playersMin} max={LIMITS.playersMax} onChange={(v) => set("players", v)} />
         </div>
-        <Field label="Observação (opcional)">
+        <Field label="Observação (opcional)" hint={`${form.notes.length}/${LIMITS.notesMax}`} error={errors.notes}>
           <textarea
             value={form.notes}
+            maxLength={LIMITS.notesMax}
             onChange={(e) => set("notes", e.target.value)}
             rows={2}
             placeholder="Ex.: precisa de bola, raquete para alugar..."
@@ -146,7 +145,7 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
         </Field>
         <p className="flex items-start gap-2 rounded-2xl bg-ocean-soft p-3 text-xs font-medium text-ocean">
           <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-          Pagamento na arena ou via Pix. Cancelamento grátis até 24h antes do horário.
+          Pagamento único antes de entrar em quadra. Cancelamentos pelo WhatsApp da arena.
         </p>
       </section>
 
@@ -154,10 +153,10 @@ export function DetailsStep({ court, dateKey, hours, total, form, onForm, onBack
         <motion.button
           whileTap={{ scale: 0.98 }}
           onClick={submit}
-          disabled={loading}
+          disabled={submitting}
           className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-brand-gradient text-base font-extrabold text-white shadow-[0_12px_30px_-10px_rgba(20,150,205,0.8)] disabled:opacity-80"
         >
-          {loading ? (
+          {submitting ? (
             <>
               <Loader2 className="size-5 animate-spin" /> Reservando...
             </>
